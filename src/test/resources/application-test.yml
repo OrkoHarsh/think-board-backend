@@ -1,0 +1,29 @@
+spring:
+  datasource:
+    url: jdbc:tc:postgresql:16-alpine:///nimbusboard_test
+    driver-class-name: org.testcontainers.jdbc.ContainerDatabaseDriver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+app:
+  jwt:
+    secret: test-secret-key-that-must-be-at-least-256-bits-long-for-hs256-algorithm
+    access-token-expiration-ms: 900000
+    refresh-token-expiration-ms: 604800000
+  cors:
+    allowed-origins: http://localhost:3000
+  openai:
+    api-key: test-key
+    model: gpt-4
+    base-url: https://api.openai.com
+    max-tokens: 100
+  rate-limit:
+    ai-requests-per-minute: 60
