@@ -8,6 +8,7 @@ import com.nimbusboard.auth.models.UserRepository;
 import com.nimbusboard.util.ApiException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -52,8 +53,14 @@ public class AuthService {
 
     @Transactional
     public AuthResponse login(LoginRequest request) {
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new ApiException("Invalid credentials", HttpStatus.UNAUTHORIZED));
+        User user;
+        try {
+            user = userRepository.findByEmail(request.getEmail())
+                    .orElseThrow(() -> new ApiException("Invalid credentials", HttpStatus.UNAUTHORIZED));
+        } catch (DataAccessException e) {
+            log.error("Database error during login lookup for email: {}", request.getEmail(), e);
+            throw new ApiException("Authentication service temporarily unavailable", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             throw new ApiException("Invalid credentials", HttpStatus.UNAUTHORIZED);
@@ -68,7 +75,13 @@ public class AuthService {
                 .user(user)
                 .expiresAt(Instant.now().plusMillis(jwtProvider.getRefreshTokenExpirationMs()))
                 .build();
-        refreshTokenRepository.save(refreshToken);
+
+        try {
+            refreshTokenRepository.save(refreshToken);
+        } catch (DataAccessException e) {
+            log.error("Database error saving refresh token for user: {}", user.getEmail(), e);
+            throw new ApiException("Authentication service temporarily unavailable", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
 
         log.info("User logged in: {}", user.getEmail());
 

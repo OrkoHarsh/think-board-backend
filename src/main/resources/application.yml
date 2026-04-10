@@ -51,8 +51,8 @@ app:
 
   openai:
     api-key: ${OPENAI_API_KEY}
-    model: ${OPENAI_MODEL:gemini-2.0-flash}
-    base-url: ${OPENAI_BASE_URL:https://generativelanguage.googleapis.com/v1beta/openai}
+    model: ${OPENAI_MODEL:llama-3.3-70b-versatile}
+    base-url: ${OPENAI_BASE_URL:https://api.groq.com/openai/v1}
     max-tokens: ${OPENAI_MAX_TOKENS:2000}
 
   rate-limit:

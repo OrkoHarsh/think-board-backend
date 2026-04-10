@@ -18,22 +18,23 @@ public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "id")
     private UUID id;
 
-    @Column(unique = true, nullable = false)
+    @Column(name = "email", unique = true, nullable = false, length = 255)
     private String email;
 
-    @Column(nullable = false)
+    @Column(name = "password", nullable = false, length = 255)
     private String password;
 
-    @Column(nullable = false)
+    @Column(name = "name", nullable = false, length = 255)
     private String name;
 
-    @Column(nullable = false)
+    @Column(name = "role", nullable = false, length = 50)
     @Builder.Default
     private String role = "USER";
 
     @CreationTimestamp
-    @Column(updatable = false)
+    @Column(name = "created_at", updatable = false)
     private Instant createdAt;
 }

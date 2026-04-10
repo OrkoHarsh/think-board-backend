@@ -56,10 +56,17 @@ public class OpenAiClient {
 
     public AiGenerateResponse generate(String prompt) {
         String systemPrompt = """
-                You are a whiteboard layout AI. Given a user prompt, generate a JSON object with two arrays:
-                - "nodes": array of objects with { "id", "type" (rect|circle|text|sticky), "x", "y", "width", "height", "text", "fill" }
-                - "edges": array of objects with { "id", "type" (arrow|line), "points" (array of numbers [x1,y1,x2,y2,...]), "stroke" }
-                Return ONLY valid JSON, no markdown, no explanation.
+                You are an architecture diagram expert. Given a user prompt, generate a simple Mermaid flowchart.
+                STRICT RULES:
+                1. Start with "graph LR" (left to right).
+                2. Use ONLY this syntax: ID[Label] --> ID[Label]
+                3. DO NOT use labels on arrows (no -->|text|>).
+                4. DO NOT use parentheses () or brackets {} for node shapes. Use only square brackets [].
+                5. Use single character IDs for nodes (A, B, C, etc).
+                Example:
+                graph LR
+                A[Client] --> B[API Gateway]
+                B --> C[User Service]
                 """;
 
         Map<String, Object> body = Map.of(
@@ -75,24 +82,42 @@ public class OpenAiClient {
         requestCounter.increment();
 
         String responseBody = webClient.post()
-                .uri("/v1/chat/completions")
+                .uri("/chat/completions")
                 .bodyValue(body)
                 .retrieve()
-                .onStatus(HttpStatusCode::is4xxClientError, response -> {
-                    if (response.statusCode().value() == 429) {
-                        return Mono.error(new RuntimeException("Rate limited by OpenAI"));
-                    }
-                    return response.bodyToMono(String.class)
-                            .flatMap(b -> Mono.error(new RuntimeException("OpenAI error: " + b)));
-                })
+                .onStatus(HttpStatusCode::is4xxClientError, response ->
+                        response.bodyToMono(String.class)
+                                .flatMap(b -> {
+                                    log.error("OpenAI API 4xx error: {}", b);
+                                    return Mono.error(new RuntimeException("OpenAI API error: " + b));
+                                }))
+                .onStatus(HttpStatusCode::is5xxServerError, response ->
+                        response.bodyToMono(String.class)
+                                .flatMap(b -> {
+                                    log.error("OpenAI API 5xx error: {}", b);
+                                    return Mono.error(new RuntimeException("OpenAI server error: " + b));
+                                }))
                 .bodyToMono(String.class)
                 .retryWhen(Retry.backoff(3, Duration.ofSeconds(2))
                         .filter(throwable -> throwable.getMessage() != null
                                 && throwable.getMessage().contains("Rate limited")))
                 .block(Duration.ofSeconds(60));
 
+        if (responseBody == null || responseBody.isBlank()) {
+            log.error("OpenAI returned an empty response");
+            throw new RuntimeException("AI service returned empty response");
+        }
+
         try {
             JsonNode root = objectMapper.readTree(responseBody);
+
+            // Log error if Gemini returns an error field
+            JsonNode errorNode = root.path("error");
+            if (!errorNode.isMissingNode()) {
+                String errorMsg = errorNode.path("message").asText("Unknown AI error");
+                log.error("OpenAI/Gemini error in response body: {}", errorMsg);
+                throw new RuntimeException("AI service error: " + errorMsg);
+            }
 
             // Log token usage
             JsonNode usage = root.path("usage");
@@ -102,18 +127,49 @@ public class OpenAiClient {
                 log.info("OpenAI token usage: {} tokens", totalTokens);
             }
 
-            String content = root.path("choices").get(0).path("message").path("content").asText();
+            // Gemini sometimes uses delta instead of message in streaming-compatible mode
+            JsonNode choices = root.path("choices");
+            if (choices.isEmpty() || choices.size() == 0) {
+                log.error("No choices in OpenAI response");
+                throw new RuntimeException("AI service returned no choices");
+            }
+
+            JsonNode choice = choices.get(0);
+            String content = null;
+
+            // Try message.content first (standard OpenAI format)
+            JsonNode messageNode = choice.path("message");
+            if (!messageNode.isMissingNode()) {
+                content = messageNode.path("content").asText(null);
+            }
+
+            // Fallback: try delta.content (Gemini streaming-compatible format)
+            if (content == null) {
+                JsonNode deltaNode = choice.path("delta");
+                if (!deltaNode.isMissingNode()) {
+                    content = deltaNode.path("content").asText(null);
+                }
+            }
+
+            if (content == null || content.isBlank()) {
+                log.error("Could not extract content from AI response. Raw: {}", responseBody);
+                throw new RuntimeException("AI service returned empty content");
+            }
 
             // Strip markdown fences if present
             content = content.strip();
-            if (content.startsWith("```json")) content = content.substring(7);
+            if (content.startsWith("```mermaid")) content = content.substring(10);
             if (content.startsWith("```")) content = content.substring(3);
             if (content.endsWith("```")) content = content.substring(0, content.length() - 3);
             content = content.strip();
 
-            return objectMapper.readValue(content, AiGenerateResponse.class);
+            log.debug("AI Mermaid output: {}", content.length() > 500 ? content.substring(0, 500) : content);
+
+            return AiGenerateResponse.builder().mermaid(content).build();
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
-            log.error("Failed to parse OpenAI response", e);
+            log.error("Failed to parse OpenAI response: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to parse AI response: " + e.getMessage());
         }
     }

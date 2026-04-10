@@ -41,8 +41,18 @@ public class AiService {
     }
 
     public AiGenerateResponse generate(String boardId, String prompt, User user) {
+        if (boardId == null || boardId.isBlank()) {
+            throw new ApiException("Board ID is required", HttpStatus.BAD_REQUEST);
+        }
+
+        UUID boardUuid;
+        try {
+            boardUuid = UUID.fromString(boardId);
+        } catch (IllegalArgumentException e) {
+            throw new ApiException("Invalid Board ID format", HttpStatus.BAD_REQUEST);
+        }
+
         // Validate board exists and user has access
-        UUID boardUuid = UUID.fromString(boardId);
         boardRepository.findById(boardUuid)
                 .orElseThrow(() -> new ApiException("Board not found", HttpStatus.NOT_FOUND));
 
@@ -59,6 +69,9 @@ public class AiService {
 
         // Sanitize prompt
         String sanitized = sanitizePrompt(prompt);
+        if (sanitized.isBlank()) {
+            throw new ApiException("Prompt cannot be empty after sanitization", HttpStatus.BAD_REQUEST);
+        }
 
         // Check cache (Redis if available, else local)
         String cacheKey = "ai:generate:" + boardId + ":" + sanitized.hashCode();
@@ -72,12 +85,23 @@ public class AiService {
         log.info("AI generation request: board={}, user={}, prompt_length={}",
                 boardId, user.getEmail(), sanitized.length());
 
-        AiGenerateResponse response = openAiClient.generate(sanitized);
+        AiGenerateResponse response;
+        try {
+            response = openAiClient.generate(sanitized);
+        } catch (RuntimeException e) {
+            log.error("AI generation failed for board {} by user {}: {}",
+                    boardId, user.getEmail(), e.getMessage());
+            throw new ApiException("AI generation failed: " + e.getMessage(), HttpStatus.BAD_GATEWAY);
+        }
+
+        if (response == null || response.getMermaid() == null || response.getMermaid().isBlank()) {
+            throw new ApiException("AI returned an empty or invalid response", HttpStatus.BAD_GATEWAY);
+        }
 
         // Cache result for 5 minutes
         putInCache(cacheKey, response);
 
-        return response; // Return preview — NOT auto-persisted
+        return response;
     }
 
     private AiGenerateResponse getFromCache(String key) {
