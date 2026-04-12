@@ -43,14 +43,14 @@ app:
 
   jwt:
     secret: ${JWT_SECRET}
-    access-token-expiration-ms: 900000     # 15 minutes
+    access-token-expiration-ms: 28800000    # 8 hours
     refresh-token-expiration-ms: 604800000 # 7 days
 
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
 
   openai:
-    api-key: ${OPENAI_API_KEY}
+    api-key: ${OPENAI_API_KEY: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}
     model: ${OPENAI_MODEL:llama-3.3-70b-versatile}
     base-url: ${OPENAI_BASE_URL:https://api.groq.com/openai/v1}
     max-tokens: ${OPENAI_MAX_TOKENS:2000}
