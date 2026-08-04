@@ -28,16 +28,22 @@ public class AiService {
     private final Map<String, Bucket> rateLimitBuckets = new ConcurrentHashMap<>();
     private final Map<String, AiGenerateResponse> localCache = new ConcurrentHashMap<>();
     private final int requestsPerMinute;
+    private final boolean mockEnabled;
+    private final boolean mockFallbackOnAuthError;
 
     public AiService(
             OpenAiClient openAiClient,
             BoardRepository boardRepository,
             @Autowired(required = false) RedisTemplate<String, Object> redisTemplate,
-            @Value("${app.rate-limit.ai-requests-per-minute}") int requestsPerMinute) {
+            @Value("${app.rate-limit.ai-requests-per-minute}") int requestsPerMinute,
+            @Value("${app.ai.mock-enabled:false}") boolean mockEnabled,
+            @Value("${app.ai.mock-fallback-on-auth-error:true}") boolean mockFallbackOnAuthError) {
         this.openAiClient = openAiClient;
         this.boardRepository = boardRepository;
         this.redisTemplate = redisTemplate;
         this.requestsPerMinute = requestsPerMinute;
+        this.mockEnabled = mockEnabled;
+        this.mockFallbackOnAuthError = mockFallbackOnAuthError;
     }
 
     public AiGenerateResponse generate(String boardId, String prompt, User user) {
@@ -87,11 +93,25 @@ public class AiService {
 
         AiGenerateResponse response;
         try {
-            response = openAiClient.generate(sanitized);
+            if (mockEnabled) {
+                log.info("AI mock mode enabled — returning sample diagram for board {}", boardId);
+                response = buildMockResponse(sanitized);
+            } else {
+                response = openAiClient.generate(sanitized);
+            }
         } catch (RuntimeException e) {
-            log.error("AI generation failed for board {} by user {}: {}",
-                    boardId, user.getEmail(), e.getMessage());
-            throw new ApiException("AI generation failed: " + e.getMessage(), HttpStatus.BAD_GATEWAY);
+            if (mockFallbackOnAuthError && isInvalidApiKeyError(e)) {
+                log.warn("AI API key rejected — falling back to sample diagram for board {}: {}",
+                        boardId, e.getMessage());
+                response = buildMockResponse(sanitized);
+            } else {
+                log.error("AI generation failed for board {} by user {}: {}",
+                        boardId, user.getEmail(), e.getMessage());
+                throw new ApiException(
+                        "AI generation failed: Invalid or missing Groq API key. "
+                                + "Set OPENAI_API_KEY on Render, or enable AI_MOCK_ENABLED=true.",
+                        HttpStatus.BAD_GATEWAY);
+            }
         }
 
         if (response == null || response.getMermaid() == null || response.getMermaid().isBlank()) {
@@ -136,5 +156,54 @@ public class AiService {
             sanitized = sanitized.substring(0, 2000);
         }
         return sanitized;
+    }
+
+    private boolean isInvalidApiKeyError(Throwable e) {
+        String msg = e.getMessage();
+        if (msg == null) return false;
+        return msg.contains("invalid_api_key")
+                || msg.contains("Invalid API Key")
+                || msg.contains("Invalid Groq API key");
+    }
+
+    private AiGenerateResponse buildMockResponse(String prompt) {
+        String lower = prompt.toLowerCase();
+        String mermaid;
+
+        if (lower.contains("url") && (lower.contains("short") || lower.contains("link"))) {
+            mermaid = """
+                    graph LR
+                    A[Client] --> B[CDN]
+                    B[CDN] --> C[Load Balancer]
+                    C[Load Balancer] --> D[API Gateway]
+                    D[API Gateway] --> E[URL Shortening Service]
+                    E[URL Shortening Service] --> F[Redis Cache]
+                    E[URL Shortening Service] --> G[PostgreSQL]
+                    E[URL Shortening Service] --> H[Analytics Service]
+                    """;
+        } else if (lower.contains("auth") || lower.contains("login")) {
+            mermaid = """
+                    graph LR
+                    A[Client App] --> B[Load Balancer]
+                    B[Load Balancer] --> C[API Gateway]
+                    C[API Gateway] --> D[Auth Service]
+                    D[Auth Service] --> E[User Database]
+                    D[Auth Service] --> F[Token Store]
+                    C[API Gateway] --> G[Protected Services]
+                    """;
+        } else {
+            mermaid = """
+                    graph LR
+                    A[Client] --> B[Load Balancer]
+                    B[Load Balancer] --> C[API Gateway]
+                    C[API Gateway] --> D[Application Service]
+                    D[Application Service] --> E[Redis Cache]
+                    D[Application Service] --> F[Database]
+                    D[Application Service] --> G[Message Queue]
+                    G[Message Queue] --> H[Worker Service]
+                    """;
+        }
+
+        return AiGenerateResponse.builder().mermaid(mermaid.strip()).build();
     }
 }

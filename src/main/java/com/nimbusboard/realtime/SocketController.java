@@ -40,14 +40,19 @@ public class SocketController {
 
         log.debug("WS message: type={}, boardId={}, user={}", type, boardId, userId);
 
-        switch (type) {
-            case "add_object" -> realtimeService.handleObjectCreate(boardId, payload, userId);
-            case "update_object" -> realtimeService.handleObjectUpdate(boardId, payload, userId);
-            case "delete_object" -> realtimeService.handleObjectDelete(boardId, payload, userId);
-            case "cursor_move" -> realtimeService.handleCursorMove(boardId, payload, userId);
-            case "user_join", "user.join" -> realtimeService.handleUserJoin(boardId, userId);
-            case "user_leave", "user.leave" -> realtimeService.handleUserLeave(boardId, userId);
-            default -> log.warn("Unknown message type: {}", type);
+        try {
+            switch (type) {
+                case "add_object" -> realtimeService.handleObjectCreate(boardId, payload, userId);
+                case "update_object" -> realtimeService.handleObjectUpdate(boardId, payload, userId);
+                case "delete_object" -> realtimeService.handleObjectDelete(boardId, payload, userId);
+                case "cursor_move" -> realtimeService.handleCursorMove(boardId, payload, userId);
+                case "user_join", "user.join" -> realtimeService.handleUserJoin(boardId, userId);
+                case "user_leave", "user.leave" -> realtimeService.handleUserLeave(boardId, userId);
+                default -> log.warn("Unknown message type: {}", type);
+            }
+        } catch (IllegalStateException e) {
+            log.warn("WS unauthorized action: type={}, board={}, user={}, reason={}",
+                    type, boardId, userId, e.getMessage());
         }
     }
 

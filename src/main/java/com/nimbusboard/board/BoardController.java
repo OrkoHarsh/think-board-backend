@@ -18,6 +18,7 @@ import java.util.UUID;
 public class BoardController {
 
     private final BoardService boardService;
+    private final BoardShareService boardShareService;
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<BoardSummaryDto>>> getBoards(
@@ -53,6 +54,31 @@ public class BoardController {
             @AuthenticationPrincipal User user) {
         boardService.deleteBoard(id, user);
         return ResponseEntity.ok(ApiResponse.success("Board deleted"));
+    }
+
+
+    @PostMapping("/{id}/share")
+    public ResponseEntity<ApiResponse<ShareBoardResponse>> shareBoard(
+            @PathVariable UUID id,
+            @Valid @RequestBody ShareBoardRequest request,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(ApiResponse.success(boardShareService.shareBoard(id, request, user)));
+    }
+
+    @GetMapping("/{id}/members")
+    public ResponseEntity<ApiResponse<List<BoardMemberDto>>> listMembers(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(ApiResponse.success(boardShareService.listMembers(id, user)));
+    }
+
+    @DeleteMapping("/{id}/members/{userId}")
+    public ResponseEntity<ApiResponse<String>> removeMember(
+            @PathVariable UUID id,
+            @PathVariable UUID userId,
+            @AuthenticationPrincipal User user) {
+        boardShareService.removeMember(id, userId, user);
+        return ResponseEntity.ok(ApiResponse.success("Member removed"));
     }
 
     @PostMapping("/{id}/objects/batch")

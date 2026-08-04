@@ -4,6 +4,7 @@ import com.nimbusboard.auth.models.User;
 import com.nimbusboard.auth.models.UserRepository;
 import com.nimbusboard.board.BoardObjectRepository;
 import com.nimbusboard.board.BoardService;
+import com.nimbusboard.board.BoardShareService;
 import com.nimbusboard.board.models.BoardObject;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,7 @@ public class RealtimeService {
     private final MessagePublisher messagePublisher;
     private final BoardSubscriber boardSubscriber;
     private final UserRepository userRepository;
+    private final BoardShareService boardShareService;
 
     /**
      * Safely parse a userId string to UUID, returning null if invalid.
@@ -41,7 +43,15 @@ public class RealtimeService {
     /**
      * Handle object creation from WebSocket.
      */
+    private void requireEdit(String boardId, String userId) {
+        UUID uid = safeParseUserId(userId);
+        if (uid == null || !boardShareService.canEdit(UUID.fromString(boardId), uid)) {
+            throw new IllegalStateException("Not authorized to edit this board");
+        }
+    }
+
     public void handleObjectCreate(String boardId, Map<String, Object> payload, String userId) {
+        requireEdit(boardId, userId);
         String objectId = (String) payload.get("id");
         String type = (String) payload.get("type");
 
@@ -70,6 +80,7 @@ public class RealtimeService {
      * Handle object update from WebSocket.
      */
     public void handleObjectUpdate(String boardId, Map<String, Object> payload, String userId) {
+        requireEdit(boardId, userId);
         String objectId = (String) payload.get("objectId");
         @SuppressWarnings("unchecked")
         Map<String, Object> updates = (Map<String, Object>) payload.get("updates");
@@ -107,6 +118,7 @@ public class RealtimeService {
      * Handle object deletion from WebSocket.
      */
     public void handleObjectDelete(String boardId, Map<String, Object> payload, String userId) {
+        requireEdit(boardId, userId);
         String objectId = (String) payload.get("objectId");
 
         if (objectId != null) {

@@ -27,6 +27,19 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
@@ -38,6 +51,12 @@ spring:
       write-dates-as-timestamps: false
 
 app:
+  frontend-url: ${FRONTEND_URL:http://localhost:5173}
+  mail:
+    enabled: ${MAIL_ENABLED:false}
+    from: ${MAIL_FROM:noreply@thinkboard.local}
+    # Prefer Brevo HTTP API (xkeysib-...) over SMTP — avoids SMTP auth mismatches
+    brevo-api-key: ${BREVO_API_KEY:}
   redis:
     enabled: ${REDIS_ENABLED:false}
 
@@ -54,6 +73,10 @@ app:
     model: ${OPENAI_MODEL:llama-3.3-70b-versatile}
     base-url: ${OPENAI_BASE_URL:https://api.groq.com/openai/v1}
     max-tokens: ${OPENAI_MAX_TOKENS:2000}
+
+  ai:
+    mock-enabled: ${AI_MOCK_ENABLED:false}
+    mock-fallback-on-auth-error: ${AI_MOCK_FALLBACK:true}
 
   rate-limit:
     ai-requests-per-minute: ${AI_RATE_LIMIT:10}

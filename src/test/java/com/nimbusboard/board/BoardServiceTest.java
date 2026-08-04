@@ -22,6 +22,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import com.nimbusboard.util.ApiException;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class BoardServiceTest {
@@ -31,6 +33,9 @@ class BoardServiceTest {
 
     @Mock
     private BoardObjectRepository boardObjectRepository;
+
+    @Mock
+    private BoardShareService boardShareService;
 
     @InjectMocks
     private BoardService boardService;
@@ -59,14 +64,14 @@ class BoardServiceTest {
 
     @Test
     void getUserBoards_returnsListOfBoards() {
-        when(boardRepository.findByOwnerIdOrderByUpdatedAtDesc(testUser.getId()))
+        when(boardRepository.findAccessibleByUserId(testUser.getId()))
                 .thenReturn(List.of(testBoard));
 
         List<BoardSummaryDto> boards = boardService.getUserBoards(testUser.getId());
 
         assertThat(boards).hasSize(1);
         assertThat(boards.get(0).getTitle()).isEqualTo("Test Board");
-        verify(boardRepository).findByOwnerIdOrderByUpdatedAtDesc(testUser.getId());
+        verify(boardRepository).findAccessibleByUserId(testUser.getId());
     }
 
     @Test
@@ -83,11 +88,15 @@ class BoardServiceTest {
     @Test
     void getBoardById_existingBoard_returnsBoard() {
         when(boardRepository.findById(testBoard.getId())).thenReturn(Optional.of(testBoard));
+        when(boardShareService.resolveAccess(testBoard, testUser.getId()))
+                .thenReturn(BoardShareService.AccessLevel.OWNER);
 
         BoardDto result = boardService.getBoardById(testBoard.getId(), testUser);
 
         assertThat(result.getId()).isEqualTo(testBoard.getId().toString());
         assertThat(result.getTitle()).isEqualTo("Test Board");
+        assertThat(result.getCurrentUserRole()).isEqualTo("OWNER");
+        verify(boardShareService).requireViewAccess(testBoard, testUser);
     }
 
     @Test
@@ -127,10 +136,12 @@ class BoardServiceTest {
         request.setTitle("Hacked");
 
         when(boardRepository.findById(testBoard.getId())).thenReturn(Optional.of(testBoard));
+        doThrow(new ApiException("Only the board owner can perform this action", HttpStatus.FORBIDDEN))
+                .when(boardShareService).requireOwner(testBoard, otherUser);
 
         assertThatThrownBy(() -> boardService.updateBoard(testBoard.getId(), request, otherUser))
                 .isInstanceOf(ApiException.class)
-                .hasMessage("Not authorized to update this board");
+                .hasMessage("Only the board owner can perform this action");
     }
 
     @Test
@@ -152,9 +163,11 @@ class BoardServiceTest {
                 .build();
 
         when(boardRepository.findById(testBoard.getId())).thenReturn(Optional.of(testBoard));
+        doThrow(new ApiException("Only the board owner can perform this action", HttpStatus.FORBIDDEN))
+                .when(boardShareService).requireOwner(testBoard, otherUser);
 
         assertThatThrownBy(() -> boardService.deleteBoard(testBoard.getId(), otherUser))
                 .isInstanceOf(ApiException.class)
-                .hasMessage("Not authorized to delete this board");
+                .hasMessage("Only the board owner can perform this action");
     }
 }

@@ -22,10 +22,11 @@ public class BoardService {
 
     private final BoardRepository boardRepository;
     private final BoardObjectRepository boardObjectRepository;
+    private final BoardShareService boardShareService;
 
     @Transactional(readOnly = true)
     public List<BoardSummaryDto> getUserBoards(UUID userId) {
-        return boardRepository.findByOwnerIdOrderByUpdatedAtDesc(userId).stream()
+        return boardRepository.findAccessibleByUserId(userId).stream()
                 .map(this::toBoardSummary)
                 .collect(Collectors.toList());
     }
@@ -45,8 +46,11 @@ public class BoardService {
     public BoardDto getBoardById(UUID boardId, User user) {
         Board board = boardRepository.findById(boardId)
                 .orElseThrow(() -> new ApiException("Board not found", HttpStatus.NOT_FOUND));
-        // For now, any authenticated user can view; add ACL later
-        return toBoardDto(board);
+        boardShareService.requireViewAccess(board, user);
+        BoardDto dto = toBoardDto(board);
+        BoardShareService.AccessLevel level = boardShareService.resolveAccess(board, user.getId());
+        dto.setCurrentUserRole(level.name());
+        return dto;
     }
 
     @Transactional
@@ -54,9 +58,7 @@ public class BoardService {
         Board board = boardRepository.findById(boardId)
                 .orElseThrow(() -> new ApiException("Board not found", HttpStatus.NOT_FOUND));
 
-        if (!board.getOwnerId().equals(user.getId())) {
-            throw new ApiException("Not authorized to update this board", HttpStatus.FORBIDDEN);
-        }
+        boardShareService.requireOwner(board, user);
 
         board.setTitle(request.getTitle());
         board = boardRepository.save(board);
@@ -68,9 +70,7 @@ public class BoardService {
         Board board = boardRepository.findById(boardId)
                 .orElseThrow(() -> new ApiException("Board not found", HttpStatus.NOT_FOUND));
 
-        if (!board.getOwnerId().equals(user.getId())) {
-            throw new ApiException("Not authorized to delete this board", HttpStatus.FORBIDDEN);
-        }
+        boardShareService.requireOwner(board, user);
 
         log.info("AUDIT: Board {} deleted by user {}", boardId, user.getEmail());
         boardRepository.delete(board);
@@ -80,6 +80,7 @@ public class BoardService {
     public List<BoardObjectDto> batchUpdateObjects(UUID boardId, BatchUpdateRequest request, User user) {
         Board board = boardRepository.findById(boardId)
                 .orElseThrow(() -> new ApiException("Board not found", HttpStatus.NOT_FOUND));
+        boardShareService.requireEditAccess(board, user);
 
         List<BoardObjectDto> results = new ArrayList<>();
 

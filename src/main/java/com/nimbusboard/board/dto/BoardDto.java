@@ -17,4 +17,6 @@ public class BoardDto {
     private Instant createdAt;
     private Instant updatedAt;
     private List<BoardObjectDto> objects;
+    /** OWNER | EDIT | VIEW for the requesting user */
+    private String currentUserRole;
 }
