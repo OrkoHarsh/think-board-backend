@@ -1,0 +1,9 @@
+@echo off
+set DATABASE_URL=jdbc:postgresql://YOUR_HOST:5432/postgres
+set DB_USERNAME=YOUR_USERNAME
+set DB_PASSWORD=YOUR_PASSWORD
+set JWT_SECRET=YOUR_JWT_SECRET
+set SPRING_FLYWAY_ENABLED=false
+set SPRING_JPA_HIBERNATE_DDL_AUTO=update
+set SPRING_DATASOURCE_HIKARI_AUTO_COMMIT=false
+java -Xmx256m -jar target\nimbusboard-backend-0.0.1-SNAPSHOT.jar
