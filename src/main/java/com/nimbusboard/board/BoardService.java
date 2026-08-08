@@ -4,6 +4,7 @@ import com.nimbusboard.auth.models.User;
 import com.nimbusboard.board.dto.*;
 import com.nimbusboard.board.models.Board;
 import com.nimbusboard.board.models.BoardObject;
+import com.nimbusboard.template.TemplateService;
 import com.nimbusboard.util.ApiException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,6 +13,7 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -23,6 +25,7 @@ public class BoardService {
     private final BoardRepository boardRepository;
     private final BoardObjectRepository boardObjectRepository;
     private final BoardShareService boardShareService;
+    private final TemplateService templateService;
 
     @Transactional(readOnly = true)
     public List<BoardSummaryDto> getUserBoards(UUID userId) {
@@ -33,11 +36,47 @@ public class BoardService {
 
     @Transactional
     public BoardDto createBoard(String title, User user) {
+        return createBoard(title, user, null);
+    }
+
+    /**
+     * Creates a board, optionally pre-populated from a template.
+     *
+     * Template objects always get server-generated ids: {@code board_objects.id} is a global primary key,
+     * so reusing authored ids would collide with objects on other boards.
+     */
+    @Transactional
+    public BoardDto createBoard(String title, User user, String templateSlug) {
+        String slug = (templateSlug == null || templateSlug.isBlank()) ? null : templateSlug.trim();
+
+        // Resolve the template first: an unknown slug then fails before anything is written,
+        // rather than leaving the rollback to undo a board insert.
+        List<TemplateService.TemplateObject> templateObjects =
+                slug != null ? templateService.resolveObjects(slug) : List.of();
+
         Board board = Board.builder()
                 .title(title)
                 .ownerId(user.getId())
+                .templateSlug(slug)
                 .build();
         board = boardRepository.save(board);
+
+        if (!templateObjects.isEmpty()) {
+            List<BoardObject> seeded = new ArrayList<>(templateObjects.size());
+            for (TemplateService.TemplateObject obj : templateObjects) {
+                seeded.add(BoardObject.builder()
+                        .id(UUID.randomUUID().toString())
+                        .board(board)
+                        .type(obj.type())
+                        .properties(new HashMap<>(obj.properties()))
+                        .createdBy(user.getId())
+                        .build());
+            }
+            boardObjectRepository.saveAll(seeded);
+            board.getObjects().addAll(seeded);
+            log.info("Board {} seeded with {} objects from template {}", board.getId(), seeded.size(), slug);
+        }
+
         log.info("Board created: {} by user {}", board.getId(), user.getEmail());
         return toBoardDto(board);
     }
@@ -115,7 +154,19 @@ public class BoardService {
             }
         }
 
+        touchBoard(board);
         return results;
+    }
+
+    /** Bump board.updatedAt so dashboard "last updated" reflects canvas edits. */
+    @Transactional
+    public void touchBoard(UUID boardId) {
+        boardRepository.findById(boardId).ifPresent(this::touchBoard);
+    }
+
+    private void touchBoard(Board board) {
+        board.setUpdatedAt(Instant.now());
+        boardRepository.save(board);
     }
 
     // --- Object-level CRUD used by realtime service ---
@@ -134,7 +185,9 @@ public class BoardService {
                 .createdBy(userId)
                 .build();
 
-        return boardObjectRepository.save(obj);
+        obj = boardObjectRepository.save(obj);
+        touchBoard(board);
+        return obj;
     }
 
     @Transactional
@@ -144,12 +197,22 @@ public class BoardService {
         if (updates != null) {
             obj.getProperties().putAll(updates);
         }
-        return boardObjectRepository.save(obj);
+        obj = boardObjectRepository.save(obj);
+        if (obj.getBoard() != null) {
+            touchBoard(obj.getBoard());
+        }
+        return obj;
     }
 
     @Transactional
     public void deleteObject(String objectId) {
-        boardObjectRepository.deleteById(objectId);
+        BoardObject obj = boardObjectRepository.findById(objectId).orElse(null);
+        if (obj == null) return;
+        Board board = obj.getBoard();
+        boardObjectRepository.delete(obj);
+        if (board != null) {
+            touchBoard(board);
+        }
     }
 
     // --- Mapping ---
@@ -169,39 +232,28 @@ public class BoardService {
                 .build();
     }
 
+    private static final int PREVIEW_OBJECT_LIMIT = 32;
+
     private BoardSummaryDto toBoardSummary(Board board) {
+        List<BoardObjectDto> preview = board.getObjects() == null
+                ? List.of()
+                : board.getObjects().stream()
+                        .limit(PREVIEW_OBJECT_LIMIT)
+                        .map(this::toObjectDto)
+                        .collect(Collectors.toList());
+
         return BoardSummaryDto.builder()
                 .id(board.getId().toString())
                 .title(board.getTitle())
                 .updatedAt(board.getUpdatedAt())
+                .previewObjects(preview)
                 .build();
     }
 
     BoardObjectDto toObjectDto(BoardObject obj) {
-        Map<String, Object> props = obj.getProperties();
-
-        return BoardObjectDto.builder()
-                .id(obj.getId())
-                .type(obj.getType())
-                .properties(props)
-                .version(obj.getVersion())
-                .updatedAt(obj.getUpdatedAt())
-                // Flatten common fields the frontend expects at root level
-                .x(toDouble(props.get("x")))
-                .y(toDouble(props.get("y")))
-                .width(toDouble(props.get("width")))
-                .height(toDouble(props.get("height")))
-                .fill(props.get("fill") != null ? props.get("fill").toString() : null)
-                .text(props.get("text") != null ? props.get("text").toString() : null)
-                .stroke(props.get("stroke") != null ? props.get("stroke").toString() : null)
-                .strokeWidth(toDouble(props.get("strokeWidth")))
-                .points(props.get("points"))
-                .build();
-    }
-
-    private Double toDouble(Object val) {
-        if (val == null) return null;
-        if (val instanceof Number n) return n.doubleValue();
-        try { return Double.parseDouble(val.toString()); } catch (NumberFormatException e) { return null; }
+        BoardObjectDto dto = BoardObjectDto.flatten(obj.getId(), obj.getType(), obj.getProperties());
+        dto.setVersion(obj.getVersion());
+        dto.setUpdatedAt(obj.getUpdatedAt());
+        return dto;
     }
 }

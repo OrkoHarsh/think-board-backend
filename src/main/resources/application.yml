@@ -66,7 +66,7 @@ app:
     refresh-token-expiration-ms: 604800000 # 7 days
 
   cors:
-    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:5174,http://localhost:3000}
 
   openai:
     api-key: ${OPENAI_API_KEY}
@@ -77,6 +77,9 @@ app:
   ai:
     mock-enabled: ${AI_MOCK_ENABLED:false}
     mock-fallback-on-auth-error: ${AI_MOCK_FALLBACK:true}
+    guardrails:
+      # Optional comma-separated terms to block in prompts, on top of the built-in checks.
+      blocked-terms: ${AI_BLOCKED_TERMS:}
 
   rate-limit:
     ai-requests-per-minute: ${AI_RATE_LIMIT:10}

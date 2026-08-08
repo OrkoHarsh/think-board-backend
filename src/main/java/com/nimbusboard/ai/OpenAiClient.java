@@ -89,8 +89,139 @@ public class OpenAiClient {
             - Do NOT use payload/data nodes (e.g. Original URL, JWT, HTML, JSON).
             """;
 
+    private static final String FLOWCHART_SYSTEM_PROMPT = """
+            You are a flowchart expert. Given a user prompt, generate a clear Mermaid flowchart of the process.
+
+            SYNTAX RULES (mandatory):
+            1. Start with "flowchart TD" (top down).
+            2. Steps use square brackets: ID[Label]
+            3. Decisions use curly braces: ID{Question?}
+            4. Start and end use stadium shape: ID([Start]) and ID([End])
+            5. Edges are: ID --> ID   or with a label: ID -->|Yes| ID
+            6. Every edge leaving a decision MUST have a label (Yes/No or the branch name).
+            7. Node IDs are short alphanumeric tokens (A, B, C, S1, D1). Define a label the first time an ID appears; reuse the bare ID afterwards.
+            8. Output ONLY the Mermaid flowchart — no markdown fences, no commentary.
+
+            FLOW RULES (mandatory):
+            1. Exactly one start node and at least one end node.
+            2. Keep 6-16 nodes. Every node must be reachable from the start.
+            3. Decisions have at least two outgoing labelled branches.
+            4. Labels are short imperative steps ("Validate input", "Send email"), not sentences.
+            5. Loops back to an earlier step are allowed when the process genuinely repeats.
+
+            EXAMPLE:
+
+            Prompt: user login flow
+            flowchart TD
+            A([Start]) --> B[Open login page]
+            B --> C[Enter credentials]
+            C --> D{Credentials valid?}
+            D -->|No| E[Show error]
+            E --> C
+            D -->|Yes| F{MFA enabled?}
+            F -->|Yes| G[Prompt for MFA code]
+            G --> H[Verify code]
+            H --> I[Create session]
+            F -->|No| I[Create session]
+            I --> J([End])
+            """;
+
+    private static final String FLOWCHART_RETRY_MESSAGE = """
+            Previous output broke the flowchart rules. Return ONLY a valid Mermaid flowchart.
+            Must start with flowchart TD. Steps ID[Label], decisions ID{Question?}, terminals ID([Start]) / ID([End]).
+            Edges must be ID --> ID or ID -->|Label| ID. No markdown fences, no commentary.
+            Keep 6-16 nodes, one start node, and label every branch out of a decision.
+            """;
+
+    private static final String CLASS_SYSTEM_PROMPT = """
+            You are a UML class diagram expert. Given a user prompt, generate a Mermaid class diagram of the domain model.
+
+            SYNTAX RULES (mandatory):
+            1. Start with "classDiagram".
+            2. Declare every class as a block:
+               class ClassName {
+               +Type attributeName
+               +methodName() ReturnType
+               }
+            3. Visibility prefixes: + public, - private, # protected. Every member needs one.
+            4. Attributes are "+Type name". Methods always end with "()" followed by the return type.
+            5. Relationships go after the class blocks, one per line, using only:
+               A --> B      (association)
+               A <|-- B     (B inherits A)
+               A *-- B      (composition)
+               A o-- B      (aggregation)
+            6. Class names are PascalCase with no spaces. Output ONLY the Mermaid class diagram — no markdown fences, no commentary.
+
+            MODELLING RULES (mandatory):
+            1. Produce 3-8 classes covering the user's domain.
+            2. Each class needs at least one attribute; add methods only where they carry meaning.
+            3. Use real domain types (UUID, String, int, Money, LocalDate, List~Order~), not vague ones.
+            4. Every class must participate in at least one relationship.
+            5. Model the user's domain, not a generic template.
+
+            EXAMPLE:
+
+            Prompt: class diagram for an e-commerce order system
+            classDiagram
+            class Customer {
+            +UUID id
+            +String name
+            +String email
+            +placeOrder() Order
+            }
+            class Order {
+            +UUID id
+            +LocalDate createdAt
+            +String status
+            +total() Money
+            }
+            class OrderLine {
+            +int quantity
+            +Money unitPrice
+            }
+            class Product {
+            +UUID id
+            +String title
+            +Money price
+            }
+            Customer --> Order
+            Order *-- OrderLine
+            Product <-- OrderLine
+            """;
+
+    private static final String CLASS_RETRY_MESSAGE = """
+            Previous output broke the class diagram rules. Return ONLY a valid Mermaid class diagram.
+            Must start with classDiagram. Every class is a "class Name {" block closed by "}".
+            Every member line starts with +, - or #. Methods end with "()" then the return type.
+            Relationships only: A --> B, A <|-- B, A *-- B, A o-- B.
+            3-8 classes, no markdown fences, no commentary.
+            """;
+
     /** Header line: graph LR (optional trailing whitespace). */
     private static final Pattern GRAPH_HEADER = Pattern.compile("^graph\\s+LR\\s*$", Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern FLOWCHART_HEADER =
+            Pattern.compile("^(flowchart|graph)\\s+(TD|TB|LR)\\s*$", Pattern.CASE_INSENSITIVE);
+
+    /** A node reference: bare ID, ID[Step], ID{Decision?} or ID([Terminal]). Inner groups are
+     *  non-capturing so the edge pattern's own groups stay at 1 and 2. */
+    private static final String NODE_REF =
+            "[A-Za-z][A-Za-z0-9_]{0,7}(?:\\[[^\\[\\]{}()|]+]|\\{[^{}|]+}|\\(\\[[^\\[\\]()|]+]\\))?";
+
+    private static final Pattern FLOWCHART_EDGE = Pattern.compile(
+            "^(" + NODE_REF + ")\\s*-->\\s*(?:\\|[^|]+\\|\\s*)?(" + NODE_REF + ")$");
+
+    private static final Pattern FLOWCHART_NODE_ID = Pattern.compile("^([A-Za-z][A-Za-z0-9_]{0,7})");
+
+    private static final Pattern CLASS_DECLARATION =
+            Pattern.compile("^class\\s+([A-Za-z][A-Za-z0-9_]*)\\s*\\{$");
+
+    private static final Pattern CLASS_MEMBER =
+            Pattern.compile("^[+\\-#~][^{}]+$");
+
+    private static final Pattern CLASS_RELATION = Pattern.compile(
+            "^[A-Za-z][A-Za-z0-9_]*\\s*(-->|<--|<\\|--|--\\|>|\\*--|--\\*|o--|--o|\\.\\.>|<\\.\\.|--)\\s*"
+                    + "[A-Za-z][A-Za-z0-9_]*(\\s*:\\s*[^{}]+)?$");
 
     /**
      * Edge line: single-letter ID[Label] --> single-letter ID[Label]
@@ -224,6 +355,122 @@ public class OpenAiClient {
         return false;
     }
 
+    /**
+     * Flowchart rules: a flowchart/graph header, then edge lines only. Node labels may be declared
+     * inline on first use. Bounded so the board never receives spaghetti.
+     */
+    static boolean isValidFlowchart(String mermaid) {
+        if (mermaid == null || mermaid.isBlank()) return false;
+
+        String[] lines = mermaid.strip().split("\\R");
+        if (lines.length < 2) return false;
+        if (!FLOWCHART_HEADER.matcher(lines[0].strip()).matches()) return false;
+
+        java.util.Set<String> nodes = new java.util.HashSet<>();
+        java.util.Set<String> targets = new java.util.HashSet<>();
+        java.util.Set<String> sources = new java.util.HashSet<>();
+        int edgeCount = 0;
+
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) continue;
+
+            java.util.regex.Matcher m = FLOWCHART_EDGE.matcher(line);
+            if (!m.matches()) return false;
+
+            String fromId = nodeId(m.group(1));
+            String toId = nodeId(m.group(2));
+            if (fromId == null || toId == null) return false;
+            if (fromId.equals(toId)) return false; // self-loop renders as an unreadable stub
+
+            nodes.add(fromId);
+            nodes.add(toId);
+            sources.add(fromId);
+            targets.add(toId);
+            edgeCount++;
+        }
+
+        if (edgeCount == 0) return false;
+        if (nodes.size() > 18 || edgeCount > 24) return false;
+
+        // Exactly one entry point keeps the flow readable and gives the layout a root.
+        java.util.Set<String> roots = new java.util.HashSet<>(sources);
+        roots.removeAll(targets);
+        if (roots.size() != 1) return false;
+
+        // At least one terminal node.
+        java.util.Set<String> leaves = new java.util.HashSet<>(targets);
+        leaves.removeAll(sources);
+        return !leaves.isEmpty();
+    }
+
+    private static String nodeId(String nodeRef) {
+        if (nodeRef == null) return null;
+        java.util.regex.Matcher m = FLOWCHART_NODE_ID.matcher(nodeRef.strip());
+        return m.find() ? m.group(1) : null;
+    }
+
+    /**
+     * Class diagram rules: classDiagram header, balanced class blocks with prefixed members, and
+     * relationship lines referring only to declared classes.
+     */
+    static boolean isValidClassDiagram(String mermaid) {
+        if (mermaid == null || mermaid.isBlank()) return false;
+
+        String[] lines = mermaid.strip().split("\\R");
+        if (lines.length < 2) return false;
+        if (!lines[0].strip().equalsIgnoreCase("classDiagram")) return false;
+
+        java.util.Set<String> declared = new java.util.LinkedHashSet<>();
+        java.util.List<String[]> relations = new java.util.ArrayList<>();
+        String openClass = null;
+        int membersInClass = 0;
+
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i].strip();
+            if (line.isEmpty()) continue;
+
+            if (openClass != null) {
+                if (line.equals("}")) {
+                    if (membersInClass == 0) return false; // empty compartments are useless
+                    openClass = null;
+                    membersInClass = 0;
+                    continue;
+                }
+                if (!CLASS_MEMBER.matcher(line).matches()) return false;
+                membersInClass++;
+                continue;
+            }
+
+            java.util.regex.Matcher decl = CLASS_DECLARATION.matcher(line);
+            if (decl.matches()) {
+                String name = decl.group(1);
+                if (!declared.add(name)) return false; // duplicate class block
+                openClass = name;
+                membersInClass = 0;
+                continue;
+            }
+
+            if (CLASS_RELATION.matcher(line).matches()) {
+                String[] parts = line.split("\\s*(-->|<--|<\\|--|--\\|>|\\*--|--\\*|o--|--o|\\.\\.>|<\\.\\.|--)\\s*", 2);
+                if (parts.length != 2) return false;
+                String right = parts[1].split(":")[0].strip();
+                relations.add(new String[] { parts[0].strip(), right });
+                continue;
+            }
+
+            return false;
+        }
+
+        if (openClass != null) return false; // unbalanced block
+        if (declared.isEmpty() || declared.size() > 12) return false;
+
+        for (String[] relation : relations) {
+            if (!declared.contains(relation[0]) || !declared.contains(relation[1])) return false;
+        }
+        return true;
+    }
+
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final String model;
@@ -256,6 +503,56 @@ public class OpenAiClient {
     }
 
     public AiGenerateResponse generate(String prompt) {
+        return generate(prompt, DiagramType.HLD);
+    }
+
+    public AiGenerateResponse generate(String prompt, DiagramType type) {
+        if (type == null || type == DiagramType.HLD) {
+            return generateHld(prompt);
+        }
+        return generateTyped(prompt, type);
+    }
+
+    /**
+     * Non-HLD diagrams: same call/validate/retry shape as the architecture path, but with the
+     * prompt and validator for the requested type.
+     */
+    private AiGenerateResponse generateTyped(String prompt, DiagramType type) {
+        String systemPrompt = type == DiagramType.FLOWCHART ? FLOWCHART_SYSTEM_PROMPT : CLASS_SYSTEM_PROMPT;
+        String retryMessage = type == DiagramType.FLOWCHART ? FLOWCHART_RETRY_MESSAGE : CLASS_RETRY_MESSAGE;
+
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content", systemPrompt));
+        messages.add(Map.of("role", "user", "content", prompt));
+
+        String content = callAndExtract(messages);
+
+        if (!isValidForType(content, type)) {
+            log.warn("AI {} output failed validation — retrying once", type);
+            messages.add(Map.of("role", "assistant", "content", content));
+            messages.add(Map.of("role", "user", "content", retryMessage));
+            content = callAndExtract(messages);
+
+            if (!isValidForType(content, type)) {
+                log.error("AI {} output still invalid after retry: {}", type,
+                        content.length() > 300 ? content.substring(0, 300) : content);
+                throw new RuntimeException("AI returned a " + type.label() + " that failed validation");
+            }
+        }
+
+        log.debug("AI {} output: {}", type, content.length() > 500 ? content.substring(0, 500) : content);
+        return AiGenerateResponse.builder().mermaid(content).diagramType(type.name()).build();
+    }
+
+    static boolean isValidForType(String mermaid, DiagramType type) {
+        return switch (type) {
+            case HLD -> isValidMermaidSyntax(mermaid) && isValidMermaidArchitecture(mermaid);
+            case FLOWCHART -> isValidFlowchart(mermaid);
+            case CLASS -> isValidClassDiagram(mermaid);
+        };
+    }
+
+    private AiGenerateResponse generateHld(String prompt) {
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", SYSTEM_PROMPT));
         messages.add(Map.of("role", "user", "content", prompt));

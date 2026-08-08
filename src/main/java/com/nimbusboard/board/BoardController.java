@@ -30,7 +30,8 @@ public class BoardController {
     public ResponseEntity<ApiResponse<BoardDto>> createBoard(
             @Valid @RequestBody CreateBoardRequest request,
             @AuthenticationPrincipal User user) {
-        return ResponseEntity.ok(ApiResponse.success(boardService.createBoard(request.getTitle(), user)));
+        return ResponseEntity.ok(ApiResponse.success(
+                boardService.createBoard(request.getTitle(), user, request.getTemplateSlug())));
     }
 
     @GetMapping("/{id}")

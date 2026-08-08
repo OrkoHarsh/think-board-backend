@@ -38,6 +38,10 @@ public class Board {
     @Builder.Default
     private List<BoardObject> objects = new ArrayList<>();
 
+    /** Slug of the template this board was created from; null for blank boards. */
+    @Column(name = "template_slug")
+    private String templateSlug;
+
     @CreationTimestamp
     @Column(updatable = false)
     private Instant createdAt;

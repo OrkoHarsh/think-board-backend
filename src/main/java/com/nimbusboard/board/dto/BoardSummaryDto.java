@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
+import java.util.List;
 
 @Data
 @Builder
@@ -15,4 +16,6 @@ public class BoardSummaryDto {
     private String id;
     private String title;
     private Instant updatedAt;
+    /** Lightweight sample of canvas objects for dashboard thumbnails. */
+    private List<BoardObjectDto> previewObjects;
 }

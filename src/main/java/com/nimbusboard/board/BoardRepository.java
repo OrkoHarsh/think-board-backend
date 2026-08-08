@@ -13,7 +13,8 @@ public interface BoardRepository extends JpaRepository<Board, UUID> {
     List<Board> findByOwnerIdOrderByUpdatedAtDesc(UUID ownerId);
 
     @Query("""
-            SELECT b FROM Board b
+            SELECT DISTINCT b FROM Board b
+            LEFT JOIN FETCH b.objects
             WHERE b.ownerId = :userId
                OR b.id IN (SELECT m.boardId FROM BoardMember m WHERE m.userId = :userId)
             ORDER BY b.updatedAt DESC

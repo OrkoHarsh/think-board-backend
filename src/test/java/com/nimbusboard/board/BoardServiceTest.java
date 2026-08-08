@@ -5,10 +5,13 @@ import com.nimbusboard.board.dto.BoardDto;
 import com.nimbusboard.board.dto.BoardSummaryDto;
 import com.nimbusboard.board.dto.UpdateBoardRequest;
 import com.nimbusboard.board.models.Board;
+import com.nimbusboard.board.models.BoardObject;
+import com.nimbusboard.template.TemplateService;
 import com.nimbusboard.util.ApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -16,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -36,6 +40,9 @@ class BoardServiceTest {
 
     @Mock
     private BoardShareService boardShareService;
+
+    @Mock
+    private TemplateService templateService;
 
     @InjectMocks
     private BoardService boardService;
@@ -83,6 +90,67 @@ class BoardServiceTest {
         assertThat(result.getTitle()).isEqualTo("Test Board");
         assertThat(result.getOwnerId()).isEqualTo(testUser.getId().toString());
         verify(boardRepository).save(any(Board.class));
+    }
+
+    @Test
+    void createBoard_withTemplate_seedsObjectsWithFreshUuids() {
+        when(boardRepository.save(any(Board.class))).thenAnswer(invocation -> {
+            Board saved = invocation.getArgument(0);
+            if (saved.getId() == null) saved.setId(UUID.randomUUID());
+            return saved;
+        });
+        when(templateService.resolveObjects("kanban")).thenReturn(List.of(
+                new TemplateService.TemplateObject("sticky", Map.of("x", 60, "y", 164, "text", "Card")),
+                new TemplateService.TemplateObject("rect", Map.of("x", 60, "y", 100, "text", "To do"))));
+
+        BoardDto result = boardService.createBoard("From template", testUser, "kanban");
+
+        assertThat(result.getObjects()).hasSize(2);
+
+        ArgumentCaptor<Board> boardCaptor = ArgumentCaptor.forClass(Board.class);
+        verify(boardRepository).save(boardCaptor.capture());
+        assertThat(boardCaptor.getValue().getTemplateSlug()).isEqualTo("kanban");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<BoardObject>> objectCaptor = ArgumentCaptor.forClass(List.class);
+        verify(boardObjectRepository).saveAll(objectCaptor.capture());
+
+        List<BoardObject> seeded = objectCaptor.getValue();
+        assertThat(seeded).hasSize(2);
+        assertThat(seeded).extracting(BoardObject::getId).doesNotHaveDuplicates();
+        // Ids must be server-generated: board_objects.id is a global key, so authored ids would collide.
+        assertThat(seeded).allSatisfy(obj -> {
+            assertThatCode(() -> UUID.fromString(obj.getId())).doesNotThrowAnyException();
+            assertThat(obj.getCreatedBy()).isEqualTo(testUser.getId());
+        });
+        assertThat(seeded).extracting(BoardObject::getType).containsExactly("sticky", "rect");
+    }
+
+    @Test
+    void createBoard_unknownTemplate_failsBeforeWritingAnything() {
+        when(templateService.resolveObjects("does-not-exist"))
+                .thenThrow(new ApiException("Template not found: does-not-exist", HttpStatus.NOT_FOUND));
+
+        assertThatThrownBy(() -> boardService.createBoard("Doomed", testUser, "does-not-exist"))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("Template not found: does-not-exist");
+
+        verify(boardRepository, never()).save(any(Board.class));
+        verify(boardObjectRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void createBoard_blankTemplateSlug_staysAnEmptyBoard() {
+        when(boardRepository.save(any(Board.class))).thenReturn(testBoard);
+
+        BoardDto result = boardService.createBoard("Blank", testUser, "   ");
+
+        assertThat(result.getObjects()).isEmpty();
+        verifyNoInteractions(templateService);
+
+        ArgumentCaptor<Board> boardCaptor = ArgumentCaptor.forClass(Board.class);
+        verify(boardRepository).save(boardCaptor.capture());
+        assertThat(boardCaptor.getValue().getTemplateSlug()).isNull();
     }
 
     @Test

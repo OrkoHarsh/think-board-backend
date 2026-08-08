@@ -22,7 +22,7 @@ public class AiController {
             @Valid @RequestBody AiGenerateRequest request,
             @AuthenticationPrincipal User user) {
         AiGenerateResponse response = aiService.generate(
-                request.getBoardId(), request.getPrompt(), user);
+                request.getBoardId(), request.getPrompt(), request.getDiagramType(), user);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 }

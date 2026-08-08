@@ -2,10 +2,8 @@ package com.nimbusboard.realtime;
 
 import com.nimbusboard.auth.models.User;
 import com.nimbusboard.auth.models.UserRepository;
-import com.nimbusboard.board.BoardObjectRepository;
 import com.nimbusboard.board.BoardService;
 import com.nimbusboard.board.BoardShareService;
-import com.nimbusboard.board.models.BoardObject;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -21,7 +19,6 @@ import java.util.UUID;
 public class RealtimeService {
 
     private final BoardService boardService;
-    private final BoardObjectRepository boardObjectRepository;
     private final MessagePublisher messagePublisher;
     private final BoardSubscriber boardSubscriber;
     private final UserRepository userRepository;
@@ -87,19 +84,11 @@ public class RealtimeService {
 
         if (objectId != null && updates != null) {
             try {
-                BoardObject existing = boardObjectRepository.findById(objectId).orElse(null);
-                if (existing != null) {
-                    existing.getProperties().putAll(updates);
-                    boardObjectRepository.save(existing);
-                }
+                boardService.updateObject(objectId, updates);
             } catch (ObjectOptimisticLockingFailureException e) {
-                // Another update beat us to it — re-fetch the latest and apply on top (last-write-wins)
+                // Another update beat us — last-write-wins retry
                 log.debug("Version conflict on object {}, retrying with latest version", objectId);
-                BoardObject fresh = boardObjectRepository.findById(objectId).orElse(null);
-                if (fresh != null) {
-                    fresh.getProperties().putAll(updates);
-                    boardObjectRepository.save(fresh);
-                }
+                boardService.updateObject(objectId, updates);
             }
         }
 
@@ -122,7 +111,7 @@ public class RealtimeService {
         String objectId = (String) payload.get("objectId");
 
         if (objectId != null) {
-            boardObjectRepository.deleteById(objectId);
+            boardService.deleteObject(objectId);
         }
 
         BoardMessage msg = BoardMessage.builder()

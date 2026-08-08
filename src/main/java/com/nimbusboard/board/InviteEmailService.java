@@ -88,18 +88,18 @@ public class InviteEmailService {
      */
     public Optional<String> sendPasswordReset(String toEmail, String toName, String rawToken) {
         String link = frontendUrl.replaceAll("/$", "") + "/reset-password?token=" + rawToken;
-        String subject = "Reset your NimbusBoard password";
+        String subject = "Reset your ThinkBoard password";
         String body = """
                 Hi %s,
 
-                We received a request to reset your NimbusBoard password.
+                We received a request to reset your ThinkBoard password.
 
                 Open this link within 1 hour to choose a new password:
                 %s
 
                 If you did not request this, you can ignore this email.
 
-                — NimbusBoard
+                — ThinkBoard
                 """.formatted(toName != null ? toName : "there", link);
 
         if (!mailEnabled) {

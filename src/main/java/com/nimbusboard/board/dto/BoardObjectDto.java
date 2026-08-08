@@ -30,4 +30,41 @@ public class BoardObjectDto {
     private String stroke;
     private Double strokeWidth;
     private Object points;
+
+    /**
+     * Builds a DTO from raw canvas properties, lifting the fields the frontend reads at the object root.
+     * Shared by persisted board objects and template previews so both render identically.
+     */
+    public static BoardObjectDto flatten(String id, String type, Map<String, Object> properties) {
+        Map<String, Object> props = properties != null ? properties : Map.of();
+
+        return BoardObjectDto.builder()
+                .id(id)
+                .type(type)
+                .properties(props)
+                .x(toDouble(props.get("x")))
+                .y(toDouble(props.get("y")))
+                .width(toDouble(props.get("width")))
+                .height(toDouble(props.get("height")))
+                .fill(asString(props.get("fill")))
+                .text(asString(props.get("text")))
+                .stroke(asString(props.get("stroke")))
+                .strokeWidth(toDouble(props.get("strokeWidth")))
+                .points(props.get("points"))
+                .build();
+    }
+
+    private static String asString(Object val) {
+        return val != null ? val.toString() : null;
+    }
+
+    private static Double toDouble(Object val) {
+        if (val == null) return null;
+        if (val instanceof Number n) return n.doubleValue();
+        try {
+            return Double.parseDouble(val.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
 }
