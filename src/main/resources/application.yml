@@ -90,11 +90,21 @@ app:
   rate-limit:
     ai-requests-per-minute: ${AI_RATE_LIMIT:10}
 
+  keepalive:
+    # SELECT 1 on this interval to keep Hikari connections warm on Railway
+    db-interval-ms: ${DB_KEEPALIVE_INTERVAL_MS:120000}
+
 management:
   endpoints:
     web:
       exposure:
         include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+  health:
+    db:
+      enabled: true
   metrics:
     export:
       prometheus:
