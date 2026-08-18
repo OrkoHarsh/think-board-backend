@@ -29,6 +29,7 @@ public class AiService {
     private final OpenAiClient openAiClient;
     private final BoardRepository boardRepository;
     private final PromptGuardrails guardrails;
+    private final AiQuotaService aiQuotaService;
     private final RedisTemplate<String, Object> redisTemplate; // nullable
     private final Map<String, Bucket> rateLimitBuckets = new ConcurrentHashMap<>();
     private final Map<String, AiGenerateResponse> localCache = new ConcurrentHashMap<>();
@@ -41,6 +42,7 @@ public class AiService {
             OpenAiClient openAiClient,
             BoardRepository boardRepository,
             PromptGuardrails guardrails,
+            AiQuotaService aiQuotaService,
             MeterRegistry meterRegistry,
             @Autowired(required = false) RedisTemplate<String, Object> redisTemplate,
             @Value("${app.rate-limit.ai-requests-per-minute}") int requestsPerMinute,
@@ -49,6 +51,7 @@ public class AiService {
         this.openAiClient = openAiClient;
         this.boardRepository = boardRepository;
         this.guardrails = guardrails;
+        this.aiQuotaService = aiQuotaService;
         this.redisTemplate = redisTemplate;
         this.requestsPerMinute = requestsPerMinute;
         this.mockEnabled = mockEnabled;
@@ -65,6 +68,10 @@ public class AiService {
     public AiGenerateResponse generate(String boardId, String prompt, String requestedType, User user) {
         if (boardId == null || boardId.isBlank()) {
             throw new ApiException("Board ID is required", HttpStatus.BAD_REQUEST);
+        }
+
+        if (user == null || user.getId() == null) {
+            throw new ApiException("Authentication required", HttpStatus.UNAUTHORIZED);
         }
 
         UUID boardUuid;
@@ -108,6 +115,8 @@ public class AiService {
             log.info("AI cache hit for board {} by user {}", boardId, user.getEmail());
             return cached;
         }
+
+        aiQuotaService.consumeOrThrow(user);
 
         // Call OpenAI
         log.info("AI generation request: board={}, user={}, type={}, prompt_length={}",

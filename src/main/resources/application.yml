@@ -89,6 +89,9 @@ app:
 
   rate-limit:
     ai-requests-per-minute: ${AI_RATE_LIMIT:10}
+    # UTC calendar day; resets at 00:00 UTC
+    ai-requests-per-day: ${AI_DAILY_LIMIT:3}
+    unlimited-emails: ${AI_UNLIMITED_EMAILS:hrsh0412@gmail.com}
 
   keepalive:
     # SELECT 1 on this interval to keep Hikari connections warm on Railway

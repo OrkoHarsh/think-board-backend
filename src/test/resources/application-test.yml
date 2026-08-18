@@ -27,3 +27,5 @@ app:
     max-tokens: 100
   rate-limit:
     ai-requests-per-minute: 60
+    ai-requests-per-day: 3
+    unlimited-emails: hrsh0412@gmail.com

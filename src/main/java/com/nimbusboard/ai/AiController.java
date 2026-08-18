@@ -3,9 +3,11 @@ package com.nimbusboard.ai;
 import com.nimbusboard.ai.dto.AiGenerateRequest;
 import com.nimbusboard.ai.dto.AiGenerateResponse;
 import com.nimbusboard.auth.models.User;
+import com.nimbusboard.util.ApiException;
 import com.nimbusboard.util.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -21,6 +23,9 @@ public class AiController {
     public ResponseEntity<ApiResponse<AiGenerateResponse>> generate(
             @Valid @RequestBody AiGenerateRequest request,
             @AuthenticationPrincipal User user) {
+        if (user == null) {
+            throw new ApiException("Authentication required", HttpStatus.UNAUTHORIZED);
+        }
         AiGenerateResponse response = aiService.generate(
                 request.getBoardId(), request.getPrompt(), request.getDiagramType(), user);
         return ResponseEntity.ok(ApiResponse.success(response));
